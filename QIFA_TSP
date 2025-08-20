@@ -1,0 +1,123 @@
+import numpy as np
+# import time
+import matplotlib.pyplot as plt
+import scipy.io as sio
+# import networkx as nx
+# import networkx.algorithms.approximation as nx_app
+import time
+import TSP_solver
+from TSP_LQA import LQA
+from TSP_AC import AC
+# from ant_colony import AntColony as AC
+from scipy.sparse import coo_matrix
+import read_tsplib
+
+def h_ising(J, b, s, c):
+#Hz = s^T J s + s^T b ( s = +1,-1 ) is the ising Hamiltonian
+    MM=len(b)
+    J=np.matrix(J)
+    b=np.matrix(b)
+    s=np.matrix(s)
+    ones=np.matrix(np.ones([1, MM]))
+    Hz=(s*J*s.T+s*b+ones*b-ones*J*ones.T)[0, 0]+c
+    return Hz
+
+def combination(NN):
+    comb=[]
+    for i in range(NN):
+        for j in range(i):
+            comb.append([i, j])
+    return comb
+    
+def cycle_H(A, cycle):
+    NN=len(cycle)
+    H=0
+    for i in range(NN-1):
+        H+=A[cycle[i], cycle[i+1]]
+    return H
+
+def QIFA_TSP(A, ants=100, steps: int=500, gamma: float=0.5, eta: float=0.1,  mom: float=0.01, zeta: float=0.2):
+    N=len(A)
+    B=np.power(A,5)+np.eye(N)
+    lbd=np.max(A)
+    J=(np.ones([N,N])-np.eye(N))/2 
+    J=np.matrix(J)
+    w=np.zeros([ants, N, N])-1
+    H_min=np.array([1e5 for i in range(ants)])
+    H_Min=1e5
+    p_min=np.zeros([ants, N, N])
+    P_Min=np.zeros([N, N])
+    C_Min=[]
+    Hz=[]
+    s=[]
+    a=1-np.tanh(w)**2
+    z=np.sin(np.pi/2*np.tanh(w))
+    x=np.cos(np.pi/2*np.tanh(w))
+    v=np.zeros([ants, N, N])
+    for step in range(steps):
+        t=(step/steps)
+        for ant in range(ants):
+            phero=W2phero(z[ant], B)
+            cyc=phero2C(phero)
+            p=C2W(cyc,N)
+            H=cycle_H(A, cyc)
+            if H<np.max(H_min):
+                if np.min(np.sum(np.sum(abs(p_min-p),axis=1),axis=1))>0:
+                    arg=np.argmax(H_min)
+                    H_min[arg]=H
+                    p_min[arg]=p
+            if H<H_Min:
+                H_Min=H
+                P_Min=p
+                C_Min=cyc
+            sig=np.sum(z[ant],axis=0)/2
+            for ii in range(N): 
+                grad1=lbd*np.array(np.dot(J, z[ant,ii,:].T))[0]*x[ant,ii,:]*a[ant,ii,:] #注意一下这里的lbd的位置，实验上可以调整，看怎样方便
+                grad2=(lbd*(sig+N-2)+A[ii,:]/2)*x[ant,ii,:]*a[ant,ii,:]
+                grad3=z[ant,ii,:]*a[ant,ii,:]
+                grad=np.pi/2*(gamma*t*(grad1+grad2)+(1-t)*grad3) #这里grad2没有除2了
+                v[ant,ii,:]=mom*v[ant,ii,:]-eta*grad
+                w[ant,ii,:]=w[ant,ii,:]+v[ant,ii,:]
+                w[ant,:,ii]=w[ant,:,ii]+v[ant,ii,:].T
+                a[ant,ii,:]=1-np.tanh(w[ant,ii,:])**2
+                z[ant,ii,:]=np.sin(np.pi/2*np.tanh(w[ant,ii,:]))
+                x[ant,ii,:]=np.cos(np.pi/2*np.tanh(w[ant,ii,:]))
+            w[ant]=w[ant]*(1-zeta)+((p_min[ant])+P_Min+np.mean(p_min,axis=0)/2)*(zeta)
+        s.append(C_Min)
+        Hz.append(H_Min)
+    return Hz, s
+
+def W2phero(z, B):
+    z=(np.array(z)+1)/2
+    z[z<1e-2]=1e-2
+    P=z/B
+    return P
+
+def phero2C(Phero):
+    N=len(Phero)
+    c_i=int(np.random.rand()*N)
+    C=[c_i]
+    list=[i for i in range(N)]
+    for i in range(N-1):
+        Phero[:, c_i]=0
+        c_i=np.random.choice(a=list, size=1, p=Phero[c_i, :]/np.sum(Phero[c_i, :]))[0]
+        C.append(c_i)
+    C.append(C[0])
+    return C
+
+def C2W(cycle,N):
+    s=-np.ones([N, N])
+    for i in range(N):
+        s[cycle[i],cycle[i+1]]=1
+        s[cycle[i+1],cycle[i]]=1
+    return s
+
+def main():
+    A=np.load('A.npy')
+    H_QIFA, P_QIFA = QIFA_TSP(A, ants=5, steps=200, gamma=20, eta=0.1, mom=0.01)
+    fig, ax = plt.subplots(1, 1)
+    ax.plot(np.arange(200), H_QIFA)
+    plt.show()
+    
+if __name__=='__main__':
+    main()
